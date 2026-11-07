@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Harbor helps households plan for floods, hurricanes, wildfires, and earthquakes, including which preparations carry across hazards and which decisions do not.">
+    <meta name="theme-color" content="#0E1C33">
+    <title>Harbor — Cross-hazard preparedness</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,640&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <a class="brand" href="/">
+          <span class="mark" aria-hidden="true">H</span>
+          <span class="brand-copy">
+            <span class="brand-name">Harbor</span>
+            <span class="brand-tag">Cross-hazard preparedness</span>
+          </span>
+        </a>
+        <div class="top-actions">
+          <button type="button" class="ghost" id="new-chat" disabled>New chat</button>
+          <p
+            class="status"
+            id="mode-status"
+            data-mode="{{ mode }}"
+            title="{% if mode == 'rag' %}Answers are requested from the connected retrieval service.{% else %}Retrieval is not connected yet. Answers come from Harbor's curated preview set.{% endif %}"
+          >
+            {% if mode == "rag" %}Retrieval connected{% else %}Preview knowledge{% endif %}
+          </p>
+        </div>
+      </header>
+
+      <div class="shell">
+        <aside class="rail">
+          <p class="eyebrow">The shared problem</p>
+          <h1>Most disaster advice is written for one hazard. Households live with several.</h1>
+          <p class="rail-copy">
+            A flood, a hurricane, a wildfire, and an earthquake do not require four different go-bags
+            or four reunion plans. They do require a few decisions that should not be mixed up.
+            Harbor is where you ask what to prepare once, and what changes when the hazard changes.
+          </p>
+          <ul class="hazard-list">
+            <li>Flood</li>
+            <li>Hurricane</li>
+            <li>Wildfire</li>
+            <li>Earthquake</li>
+          </ul>
+          <p class="rail-note">
+            Planning guidance for ahead of time. During an emergency, follow local officials.
+            Harbor does not issue warnings or evacuation orders.
+          </p>
+        </aside>
+
+        <main class="chat">
+          <div class="thread" id="thread">
+            <div class="thread-inner">
+              <section class="empty" id="empty">
+                <p class="eyebrow">Start with a question</p>
+                <h2>What should you do before the next one?</h2>
+                <p class="empty-lead">
+                  Ask what stays the same across floods, hurricanes, wildfires, and earthquakes, and what should not.
+                </p>
+                <div class="prompts">
+                  <button type="button" class="prompt" data-prompt="What should go in one go-bag for floods, hurricanes, wildfires, and earthquakes?">
+                    <span class="prompt-kicker">Shared kit</span>
+                    <span class="prompt-text">What should go in one go-bag for floods, hurricanes, wildfires, and earthquakes?</span>
+                  </button>
+                  <button type="button" class="prompt" data-prompt="How is leaving for a flood different from leaving for a hurricane?">
+                    <span class="prompt-kicker">Two kinds of leaving</span>
+                    <span class="prompt-text">How is leaving for a flood different from leaving for a hurricane?</span>
+                  </button>
+                  <button type="button" class="prompt" data-prompt="Which alerts should we join before wildfire or hurricane season?">
+                    <span class="prompt-kicker">Early warnings</span>
+                    <span class="prompt-text">Which alerts should we join before wildfire or hurricane season?</span>
+                  </button>
+                  <button type="button" class="prompt" data-prompt="During an earthquake, should we run outside or stay where we are?">
+                    <span class="prompt-kicker">During shaking</span>
+                    <span class="prompt-text">During an earthquake, should we run outside or stay where we are?</span>
+                  </button>
+                </div>
+              </section>
+              <div id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+            </div>
+          </div>
+
+          <form class="composer-wrap" id="composer" autocomplete="off">
+            <div class="composer">
+              <label class="sr-only" for="message">Your question</label>
+              <textarea
+                id="message"
+                name="message"
+                rows="1"
+                maxlength="2000"
+                placeholder="Ask a preparedness question"
+                aria-describedby="hint"
+                enterkeyhint="send"
+                required
+              ></textarea>
+              <button type="submit" class="send" id="send" aria-label="Send message">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              </button>
+            </div>
+            <p class="fineprint" id="hint">
+              Enter to send on a keyboard. Shift+Enter adds a line.
+              <span class="fineprint-sep" aria-hidden="true">·</span>
+              {% if mode == "rag" %}
+                Answers are requested from the connected retrieval service.
+              {% else %}
+                Preview mode uses a curated starter set until retrieval is connected.
+              {% endif %}
+              Not an emergency service.
+            </p>
+          </form>
+        </main>
+      </div>
+    </div>
+    <noscript>
+      <p class="noscript">Turn on JavaScript to send questions. Nothing needs to be installed.</p>
+    </noscript>
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+  </body>
+</html>
