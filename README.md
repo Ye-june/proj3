@@ -4,7 +4,7 @@ Harbor is a browser chat for a problem that shows up across disasters, not insid
 
 Harbor answers only from a retrieved source, and it says when that source is missing. Active weather alerts come from the National Weather Service for a U.S. city and state. General safety answers come from a curated guidance set and are labeled as guidance, not as a live incident report. Shelter locations, road closures, power outages, and evacuation orders are not invented.
 
-An optional OpenAI-compatible Chat Completions API can rephrase that retrieved text. Without `OPENAI_API_KEY`, the source wording is shown directly. `RAG_BACKEND_URL` still forwards questions to a separate retrieval service when the team connects one.
+An optional OpenAI-compatible Chat Completions API reads a natural-language question, chooses the relevant documents, and answers from those documents only. Without `OPENAI_API_KEY`, Harbor still answers from a keyword match on the same sources. `RAG_BACKEND_URL` still forwards questions to a separate retrieval service when the team connects one.
 
 ## What you can do
 
@@ -19,7 +19,7 @@ An optional OpenAI-compatible Chat Completions API can rephrase that retrieved t
 | --- | --- |
 | `app.py` | Flask routes: the page, `/health`, and `POST /api/chat` |
 | `wsgi.py` | Production entry point for Gunicorn |
-| `chat/responder.py` | Grounded answers, the optional language-model rephrase, and the RAG hook |
+| `chat/responder.py` | Grounded answers, natural-language document selection, and the RAG hook |
 | `chat/official.py` | City lookup and National Weather Service alerts |
 | `chat/policy.py` | The rule against inventing emergency facts |
 | `templates/index.html` | Chat page |
@@ -71,7 +71,7 @@ python -m unittest discover -s tests -v
 | `FLASK_DEBUG` | No | Set to `1` only for local debugging. |
 | `RAG_BACKEND_URL` | No | When set, chat questions are POSTed here instead of using the preview set. |
 | `RAG_TIMEOUT` | No | Seconds to wait for the RAG service, alert feeds, or language model. Defaults to 30. |
-| `OPENAI_API_KEY` | No | When set, retrieved text is rephrased through Chat Completions. |
+| `OPENAI_API_KEY` | No | When set, a natural-language question is matched to the relevant documents through Chat Completions. |
 | `OPENAI_BASE_URL` | No | OpenAI-compatible base URL. Defaults to `https://api.openai.com/v1`. |
 | `OPENAI_MODEL` | No | Model name. Defaults to `gpt-4o-mini`. |
 
@@ -97,7 +97,7 @@ Content-Type: application/json
 {"reply": "Grounded answer text.", "sources": ["Document title", {"title": "Another source"}]}
 ```
 
-`reply` may also be named `answer` or `response`. The page shows source titles and the time they were checked under the assistant message. While `RAG_BACKEND_URL` is empty, Harbor uses its own retrieval. `mode` is `official` for a weather-alert lookup, `guidance` for curated safety text, `unavailable` when a live source is missing, or `llm` when a model rephrased the retrieved text. The header reads **Sources required** unless a key or retrieval URL is configured.
+`reply` may also be named `answer` or `response`. The page shows source titles and the time they were checked under the assistant message. While `RAG_BACKEND_URL` is empty, Harbor uses its own retrieval. `mode` is `official` for a weather-alert lookup, `guidance` for curated safety text, `unavailable` when a live source is missing, or `llm` when a model answered from the documents it selected. The header reads **Sources required** unless a key or retrieval URL is configured.
 
 Conversation history stays in the browser tab. Each request sends the recent turns so a future model can use them. Harbor does not store questions on the server.
 

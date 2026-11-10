@@ -83,7 +83,14 @@ _STATES = {
 _GAP_TOPICS = (
     (
         "shelter",
-        ("shelter", "warming center", "cooling center", "evacuation center"),
+        (
+            "shelter",
+            "warming center",
+            "cooling center",
+            "evacuation center",
+            "place to sleep",
+            "somewhere to stay",
+        ),
         "open shelters",
         "I do not have a live list of open shelters, and I will not invent one. "
         "Check your local emergency management office or the American Red Cross shelter map, "
@@ -91,21 +98,44 @@ _GAP_TOPICS = (
     ),
     (
         "roads",
-        ("road closure", "roads closed", "road closed", "highway closed", "which roads"),
+        (
+            "road closure",
+            "roads closed",
+            "road closed",
+            "highway closed",
+            "which roads",
+            "is the highway open",
+            "which route is open",
+        ),
         "road closures",
         "I do not have a live road-closure feed, and I will not guess which roads are open. "
         "Use your state transportation department or local emergency management for closures.",
     ),
     (
         "power",
-        ("power outage", "power is out", "without power", "blackout", "electricity is out"),
+        (
+            "power outage",
+            "power is out",
+            "without power",
+            "blackout",
+            "electricity is out",
+            "lights are out",
+            "lost power",
+        ),
         "power outages",
         "I do not have a live outage map, and I will not guess where power is out. "
         "Check the utility that serves the address, or the outage page linked by local emergency management.",
     ),
     (
         "order",
-        ("evacuation order", "ordered to evacuate", "under an order", "am i supposed to leave"),
+        (
+            "evacuation order",
+            "ordered to evacuate",
+            "under an order",
+            "am i supposed to leave",
+            "do we have to evacuate",
+            "mandatory evacuation",
+        ),
         "evacuation orders",
         "I cannot see an evacuation order for you, and I will not invent one. "
         "An order comes from local emergency management. This chat is not that order.",
@@ -151,13 +181,16 @@ def normalize_for_match(text: str) -> str:
 def find_place(message: str) -> tuple[str, str] | None:
     """Return a city and postal state when the question names one."""
     text = message.lower().replace("’", "'")
-    pattern = re.compile(
-        r"(?:in|near|around|for|at)\s+([a-z][a-z .'-]{1,40}?)\s*,\s*([a-z][a-z .]{1,20})"
-    )
+    pattern = re.compile(r"(?:in|near|around|for|at)\s+([a-z][a-z .'-]{1,40}?)\s*,\s*")
     found = None
     for match in pattern.finditer(text):
         city = re.sub(r"\s+", " ", match.group(1)).strip(" .")
-        state = _STATES.get(re.sub(r"\s+", " ", match.group(2)).strip(" ."))
+        words = re.findall(r"[a-z]+", text[match.end() :])[:3]
+        state = None
+        if len(words) >= 2:
+            state = _STATES.get(f"{words[0]} {words[1]}")
+        if state is None and words:
+            state = _STATES.get(words[0])
         if city and state:
             found = (city.title(), state)
     return found
@@ -176,6 +209,11 @@ def gap_topics(normalized: str) -> list[tuple[str, str, str]]:
         if any(phrase in normalized for phrase in phrases):
             found.append((topic_id, label, guidance))
     return found
+
+
+def gap_catalog() -> list[tuple[str, str, str]]:
+    """Every live-data gap, so a question can be matched without a fixed phrase."""
+    return [(topic_id, label, guidance) for topic_id, phrases, label, guidance in _GAP_TOPICS]
 
 
 def clip(text: str, limit: int = 420) -> str:

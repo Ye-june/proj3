@@ -187,6 +187,114 @@ class PlaceholderRoutingTests(unittest.TestCase):
         self.assertIn("never invent emergency information", sent["messages"][0]["content"])
         self.assertIn("one gallon", sent["messages"][1]["content"])
 
+    def test_paraphrased_shaking_question_finds_earthquake_guidance(self):
+        result = answer_question(
+            "The floor started moving and everyone wants to sprint outside. What should we do?",
+            [],
+        )
+        self.assertEqual(result["mode"], "guidance")
+        self.assertEqual(result["sources"][0]["id"], "earthquake")
+        self.assertIn("Drop, Cover, and Hold On", result["reply"])
+
+    def test_place_to_sleep_is_a_shelter_gap(self):
+        result = answer_question("Is there a place to sleep tonight if we have to leave?", [])
+        self.assertEqual(result["mode"], "unavailable")
+        self.assertIn("will not invent", result["reply"])
+        self.assertNotIn("Main Street", result["reply"])
+
+    @patch("chat.responder.urllib.request.urlopen")
+    def test_model_selects_the_relevant_passage_for_a_paraphrase(self, urlopen):
+        urlopen.return_value = _FakeResponse(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "passage_ids": ["earthquake"],
+                                        "lookup_alerts": False,
+                                        "answer": (
+                                            "Stay inside. Drop, Cover, and Hold On until the shaking stops. "
+                                            "Do not run outside during the shaking."
+                                        ),
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            )
+        )
+        question = "The room is lurching and everyone is about to bolt for the door. What do we do?"
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            os.environ.pop("RAG_BACKEND_URL", None)
+            result = answer_question(question, [])
+        self.assertEqual(result["mode"], "llm")
+        self.assertEqual(result["sources"][0]["id"], "earthquake")
+        self.assertIn("Drop, Cover, and Hold On", result["reply"])
+        self.assertNotIn("go-bag", result["reply"].lower())
+
+    @patch("chat.responder.urllib.request.urlopen")
+    def test_model_cannot_invent_a_shelter_address(self, urlopen):
+        urlopen.return_value = _FakeResponse(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "passage_ids": ["gap-shelter"],
+                                        "lookup_alerts": False,
+                                        "answer": "The open shelter is at 100 Main Street.",
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            )
+        )
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            os.environ.pop("RAG_BACKEND_URL", None)
+            result = answer_question("Where can our family sleep tonight if we leave the house?", [])
+        self.assertEqual(result["mode"], "unavailable")
+        self.assertIn("will not invent", result["reply"])
+        self.assertNotIn("Main Street", result["reply"])
+
+    @patch("chat.responder.urllib.request.urlopen")
+    def test_model_can_ask_for_current_warnings(self, urlopen):
+        urlopen.side_effect = [
+            _FakeResponse(
+                json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "passage_ids": [],
+                                            "lookup_alerts": True,
+                                            "answer": "",
+                                        }
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                )
+            ),
+            _FakeResponse(_CENSUS),
+            _FakeResponse(_NWS),
+        ]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            os.environ.pop("RAG_BACKEND_URL", None)
+            result = answer_question("Are there any warnings up around Austin, Texas right now?", [])
+        self.assertEqual(result["mode"], "official")
+        self.assertIn("Take shelter now.", result["reply"])
+        self.assertIn("Austin, Texas", result["reply"])
+
 
 _CENSUS = json.dumps(
     {

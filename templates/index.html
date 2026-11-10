@@ -28,7 +28,7 @@
             class="status"
             id="mode-status"
             data-mode="{{ mode }}"
-            title="{% if mode == 'rag' %}Answers are requested from the connected retrieval service.{% elif mode == 'llm' %}A language model may rephrase text, and only from retrieved sources.{% else %}Harbor reports a source and the time it was checked, or says the source is missing.{% endif %}"
+            title="{% if mode == 'rag' %}Answers are requested from the connected retrieval service.{% elif mode == 'llm' %}A language model answers the question from the retrieved sources only.{% else %}Harbor reports a source and the time it was checked, or says the source is missing.{% endif %}"
           >
             {% if mode == "rag" %}Retrieval connected{% elif mode == "llm" %}Model on sources{% else %}Sources required{% endif %}
           </p>
@@ -113,7 +113,7 @@
               {% if mode == "rag" %}
                 Answers are requested from the connected retrieval service.
               {% elif mode == "llm" %}
-                A language model may rephrase retrieved text and may not add facts.
+                Ask in your own words. A language model answers only from the retrieved sources.
               {% else %}
                 Answers include the source and the time it was checked.
               {% endif %}

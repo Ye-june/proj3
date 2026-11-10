@@ -7,9 +7,9 @@ The Flask route only calls :func:`answer_question`.
    for a named U.S. city, or a curated guidance passage. Shelters, road
    closures, power outages, and evacuation orders are answered only when a
    source contains them. Harbor says when it does not have that source.
-3. ``OPENAI_API_KEY`` optionally rephrases the retrieved text through an
-   OpenAI-compatible Chat Completions API. The model is instructed to add
-   no facts beyond that text.
+3. ``OPENAI_API_KEY`` lets an OpenAI-compatible model read the question in
+   ordinary language, choose the relevant documents, and answer from those
+   documents only. If the model is unavailable, the keyword match is shown.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ from chat.policy import (
     SYSTEM_PROMPT,
     checked_now,
     find_place,
+    clip,
+    gap_catalog,
     gap_topics,
     live_alert_requested,
     normalize_for_match,
@@ -150,6 +152,10 @@ PASSAGES = [
             "aftershock",
             "while it is shaking",
             "doorway",
+            "floor started",
+            "ground started",
+            "ground is shaking",
+            "tremor",
         ],
         "body": (
             "While the ground is shaking, Drop, Cover, and Hold On. Get down, get under a sturdy table "
@@ -269,10 +275,9 @@ def answer_question(message: str, history: list[dict] | None = None) -> dict:
     backend = os.environ.get("RAG_BACKEND_URL", "").strip()
     if backend:
         return _ask_rag(backend, message, history)
-    draft = PlaceholderResponder().answer(message, history)
     if os.environ.get("OPENAI_API_KEY", "").strip():
-        return _phrase_with_llm(message, draft)
-    return draft
+        return _answer_naturally(message, history)
+    return PlaceholderResponder().answer(message, history)
 
 
 class PlaceholderResponder:
@@ -417,16 +422,17 @@ def _package(reply: str, mode: str, sources: list[dict], checked: str, notice: s
     }
 
 
-def _phrase_with_llm(message: str, draft: dict) -> dict:
-    """Rephrase retrieved text. On failure, return the source text unchanged."""
-    context = (
-        f"Question: {message}\n\n"
-        f"Retrieved at: {draft.get('retrieved_at', '')}\n"
-        f"Mode: {draft.get('mode', '')}\n"
-        f"Source text:\n{draft.get('reply', '')}\n"
-    )
+def _answer_naturally(message: str, history: list[dict]) -> dict:
+    """Let the model choose relevant documents, then answer only from those."""
+    normalized = normalize_for_match(message)
+    if live_alert_requested(normalized) or gap_topics(normalized):
+        return PlaceholderResponder().answer(message, history)
+
+    draft = PlaceholderResponder().answer(message, history)
+    checked = draft.get("retrieved_at") or checked_now()
+    documents = _reference_documents(checked)
     try:
-        phrased = _chat_completion(SYSTEM_PROMPT, context)
+        raw = _chat_completion(SYSTEM_PROMPT, _question_prompt(message, history, documents))
     except (ResponderError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.warning("Language model unavailable: %s", exc)
         draft = dict(draft)
@@ -434,12 +440,169 @@ def _phrase_with_llm(message: str, draft: dict) -> dict:
             "The language model was unavailable. This wording comes directly from the retrieved source."
         )
         return draft
-    if not phrased:
+
+    choice = _parse_model_choice(raw)
+    if choice is None:
+        if raw:
+            return _use_model_wording(draft, raw)
         draft = dict(draft)
         draft["notice"] = (
             "The language model returned no wording. This text comes directly from the retrieved source."
         )
         return draft
+
+    if choice["lookup_alerts"]:
+        topics = [doc["topic"] for doc in _chosen(documents, choice["passage_ids"]) if doc["kind"] == "gap"]
+        return _alert_answer(message, topics, checked)
+
+    chosen = _chosen(documents, choice["passage_ids"])
+    if not chosen:
+        return draft
+
+    gaps = [doc for doc in chosen if doc["kind"] == "gap"]
+    guidance = [doc for doc in chosen if doc["kind"] == "guidance"]
+    if not guidance:
+        return _gap_answer([doc["topic"] for doc in gaps], checked)
+
+    reply = _grounded_wording(choice["answer"], guidance)
+    if gaps:
+        reply = reply.rstrip() + "\n\n" + "\n\n".join(doc["text"] for doc in gaps)
+    if "emergency services" not in reply.lower():
+        reply = reply.rstrip() + "\n\n" + CLOSING
+    return _package(
+        reply,
+        "llm",
+        [doc["source"] for doc in guidance + gaps],
+        checked,
+        "Wording from the language model, limited to the retrieved sources below.",
+    )
+
+
+def _reference_documents(checked: str) -> list[dict]:
+    documents = []
+    for passage in PASSAGES:
+        documents.append(
+            {
+                "id": passage["id"],
+                "kind": "guidance",
+                "title": passage["title"],
+                "text": passage["body"].rstrip(),
+                "source": {
+                    "id": passage["id"],
+                    "title": passage["title"],
+                    "detail": "Curated guidance. Not a live official report.",
+                    "retrieved_at": checked,
+                },
+            }
+        )
+    for topic_id, label, guidance in gap_catalog():
+        source = _gap_source(checked, label)
+        source["id"] = f"gap-{topic_id}"
+        documents.append(
+            {
+                "id": f"gap-{topic_id}",
+                "kind": "gap",
+                "title": f"No live source for {label}",
+                "text": guidance,
+                "topic": (topic_id, label, guidance),
+                "source": source,
+            }
+        )
+    return documents
+
+
+def _question_prompt(message: str, history: list[dict], documents: list[dict]) -> str:
+    lines = [
+        "The user asked a natural language question about disaster preparedness or local emergency information.",
+        "Choose only the documents that contain the relevant information.",
+        "Reply with one JSON object and no other text:",
+        '{"passage_ids": ["id"], "lookup_alerts": false, "answer": "answer using only those documents"}',
+        "Rules:",
+        "- passage_ids must be ids from the documents below. Use at most 3.",
+        "- Set lookup_alerts to true only when the user wants current weather alerts or warnings for a place.",
+        "- If the user wants a live shelter, road closure, power outage, or evacuation order, choose the matching gap document and do not invent one.",
+        "- The answer may use only facts stated in the chosen documents.",
+        "- If none of the documents apply, use an empty passage_ids list and an empty answer.",
+        "",
+        "Documents:",
+    ]
+    for document in documents:
+        lines.append(f"[{document['id']}] {document['title']}")
+        lines.append(document["text"])
+        lines.append("")
+    earlier = []
+    for turn in history[-6:]:
+        role = turn.get("role") if isinstance(turn, dict) else None
+        content = turn.get("content") if isinstance(turn, dict) else None
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            earlier.append(f"{role}: {clip(content, 400)}")
+    if earlier:
+        lines.append("Earlier conversation:")
+        lines.extend(earlier)
+        lines.append("")
+    lines.append("Question: " + message.strip())
+    return "\n".join(lines)
+
+
+def _parse_model_choice(raw: str) -> dict | None:
+    text = (raw or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if "passage_ids" not in data and "lookup_alerts" not in data:
+        return None
+    ids = data.get("passage_ids") or []
+    if isinstance(ids, str):
+        ids = [ids]
+    if not isinstance(ids, list):
+        ids = []
+    cleaned = []
+    for item in ids:
+        if isinstance(item, str) and item.strip():
+            cleaned.append(item.strip())
+    answer = data.get("answer") if isinstance(data.get("answer"), str) else ""
+    return {
+        "passage_ids": cleaned[:3],
+        "lookup_alerts": bool(data.get("lookup_alerts")),
+        "answer": answer.strip(),
+    }
+
+
+def _chosen(documents: list[dict], ids: list[str]) -> list[dict]:
+    by_id = {document["id"]: document for document in documents}
+    chosen = []
+    for document_id in ids:
+        document = by_id.get(document_id)
+        if document is not None and document not in chosen:
+            chosen.append(document)
+    return chosen
+
+
+def _grounded_wording(answer: str, documents: list[dict]) -> str:
+    """Keep the model's wording only when it still overlaps the chosen documents."""
+    stitched = "\n\n".join(document["text"].rstrip() for document in documents) + "\n\n" + CLOSING
+    source_words = set(re.findall(r"[a-z]{4,}", " ".join(document["text"].lower() for document in documents)))
+    answer_words = [
+        word
+        for word in re.findall(r"[a-z]{4,}", answer.lower())
+        if word not in {"this", "that", "with", "from", "your", "have", "will", "they", "them", "when", "what", "should"}
+    ]
+    overlap = {word for word in answer_words if word in source_words}
+    if len(overlap) < 2:
+        return stitched
+    return answer.strip()
+
+
+def _use_model_wording(draft: dict, phrased: str) -> dict:
     phrased_draft = dict(draft)
     phrased_draft["reply"] = phrased
     phrased_draft["mode"] = "llm"
