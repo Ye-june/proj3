@@ -335,8 +335,8 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
     matched = lookup.get("matched") or f"{city}, {state}"
     if not alerts:
         body = (
-            f"The National Weather Service returned no active alerts for {matched} "
-            f"when checked at {checked}. That is not an all-clear. Local emergency management "
+            f"The National Weather Service returned no active alerts for {matched}. "
+            "That is not an all-clear. Local emergency management "
             "can issue instructions that do not appear in this feed."
         )
         sources = [
@@ -350,7 +350,7 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
         ]
     else:
         lines = [
-            f"Active National Weather Service alerts for {matched}, checked at {checked}.",
+            f"Active National Weather Service alerts for {matched}.",
             "",
         ]
         sources = []
@@ -378,14 +378,14 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
         "\n\nThis is only the alert feed for that point. "
         "It does not list shelters, road closures, or power outages.\n\n" + SAFETY_LINE
     )
-    notice = f"National Weather Service alerts for {matched}, checked at {checked}."
+    notice = f"National Weather Service alerts for {matched}."
     return _package(body, "official", sources, checked, notice)
 
 
 def _gap_answer(topics: list[tuple[str, str, str]], checked: str) -> dict:
     labels = ", ".join(topic[1] for topic in topics)
     body = (
-        f"I do not have a live source for {labels}, checked at {checked}.\n\n"
+        f"I do not have a live source for {labels}.\n\n"
         + _gap_paragraphs(topics)
         + "\n\n"
         + SAFETY_LINE

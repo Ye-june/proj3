@@ -203,9 +203,6 @@
       if (source.title) {
         bits.push(source.title);
       }
-      if (source.retrieved_at) {
-        bits.push("checked " + source.retrieved_at);
-      }
       if (source.detail) {
         bits.push(source.detail);
       }
@@ -255,7 +252,7 @@
       modeStatus.title = "A language model rephrased retrieved text and was told not to add facts.";
     } else if (mode === "official") {
       modeStatus.textContent = "Weather Service";
-      modeStatus.title = "This reply uses National Weather Service alerts checked at the time shown.";
+      modeStatus.title = "This reply uses National Weather Service alerts.";
     } else if (mode === "unavailable") {
       modeStatus.textContent = "Source missing";
       modeStatus.title = "Harbor does not have a live source for that request and did not invent one.";
