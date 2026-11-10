@@ -7,13 +7,16 @@ import urllib.error
 from unittest.mock import patch
 
 from app import create_app
-from chat.responder import PlaceholderResponder
+from chat.responder import PlaceholderResponder, answer_question
 
 
 class HarborAppTests(unittest.TestCase):
     def setUp(self):
         os.environ.pop("RAG_BACKEND_URL", None)
+        os.environ.pop("OPENAI_API_KEY", None)
         self.app = create_app()
+        os.environ.pop("RAG_BACKEND_URL", None)
+        os.environ.pop("OPENAI_API_KEY", None)
         self.client = self.app.test_client()
 
     def test_homepage_renders_chat_shell(self):
@@ -22,7 +25,7 @@ class HarborAppTests(unittest.TestCase):
         page = response.get_data(as_text=True)
         self.assertIn("Harbor", page)
         self.assertIn('id="composer"', page)
-        self.assertIn("Preview knowledge", page)
+        self.assertIn("Sources required", page)
         self.assertIn("go-bag", page)
         self.assertIn("style.css", page)
 
@@ -35,10 +38,11 @@ class HarborAppTests(unittest.TestCase):
         response = self.client.post("/api/chat", json={"message": "What should go in a go-bag?"})
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
-        self.assertEqual(body["mode"], "placeholder")
+        self.assertEqual(body["mode"], "guidance")
         self.assertIn("one gallon", body["reply"])
         self.assertEqual(body["sources"][0]["id"], "gobag")
-        self.assertIn("Preview", body["notice"])
+        self.assertIn("Not a live", body["notice"])
+        self.assertTrue(body["retrieved_at"])
 
     def test_empty_message(self):
         response = self.client.post("/api/chat", json={"message": "   "})
@@ -114,7 +118,7 @@ class PlaceholderRoutingTests(unittest.TestCase):
         for question, expected in cases.items():
             result = self.responder.answer(question, [])
             self.assertEqual(result["sources"][0]["id"], expected, question)
-            self.assertEqual(result["mode"], "placeholder")
+            self.assertEqual(result["mode"], "guidance")
 
     def test_wildfire_and_plan_and_overview(self):
         wildfire = self.responder.answer("When should we leave if there is a wildfire and smoke?", [])
@@ -129,8 +133,94 @@ class PlaceholderRoutingTests(unittest.TestCase):
 
     def test_unrelated_question_gets_the_fallback(self):
         result = self.responder.answer("What is the best pizza nearby?", [])
-        self.assertEqual(result["sources"][0]["id"], "preview")
-        self.assertIn("plan ahead", result["reply"])
+        self.assertEqual(result["sources"][0]["id"], "gap")
+        self.assertIn("instead of guessing", result["reply"])
+
+    @patch("chat.official.urllib.request.urlopen", side_effect=AssertionError("should not call the network"))
+    def test_shelter_question_does_not_invent_a_location(self, _urlopen):
+        result = self.responder.answer("Where is the nearest open shelter in Austin, Texas?", [])
+        self.assertEqual(result["mode"], "unavailable")
+        self.assertIn("will not invent", result["reply"])
+        self.assertNotIn("Main Street", result["reply"])
+
+    def test_live_alerts_require_a_place(self):
+        result = self.responder.answer("Are there active weather alerts?", [])
+        self.assertEqual(result["mode"], "unavailable")
+        self.assertIn("city and state", result["reply"])
+
+    @patch("chat.official.urllib.request.urlopen")
+    def test_live_alerts_quote_the_weather_service(self, urlopen):
+        urlopen.side_effect = [
+            _FakeResponse(_CENSUS),
+            _FakeResponse(_NWS),
+        ]
+        result = self.responder.answer("Are there active weather alerts in Austin, Texas?", [])
+        self.assertEqual(result["mode"], "official")
+        self.assertIn("Tornado Warning", result["reply"])
+        self.assertIn("Take shelter now.", result["reply"])
+        self.assertIn("does not list shelters", result["reply"])
+        self.assertTrue(result["sources"][0]["retrieved_at"])
+        self.assertEqual(result["sources"][0]["url"], "https://api.weather.gov/alerts/test")
+
+    @patch("chat.responder.urllib.request.urlopen")
+    def test_language_model_may_only_rephrase_the_source(self, urlopen):
+        urlopen.return_value = _FakeResponse(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "Pack one gallon of water per person. This is general guidance, not a live report."
+                            }
+                        }
+                    ]
+                }
+            )
+        )
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            os.environ.pop("RAG_BACKEND_URL", None)
+            result = answer_question("What should go in a go-bag?", [])
+        self.assertEqual(result["mode"], "llm")
+        self.assertIn("one gallon", result["reply"])
+        self.assertEqual(result["sources"][0]["id"], "gobag")
+        sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertIn("never invent emergency information", sent["messages"][0]["content"])
+        self.assertIn("one gallon", sent["messages"][1]["content"])
+
+
+_CENSUS = json.dumps(
+    {
+        "results": [
+            {
+                "name": "Austin",
+                "admin1": "Texas",
+                "country_code": "US",
+                "latitude": 30.2672,
+                "longitude": -97.7431,
+            }
+        ]
+    }
+)
+
+_NWS = json.dumps(
+    {
+        "features": [
+            {
+                "id": "https://api.weather.gov/alerts/test",
+                "properties": {
+                    "event": "Tornado Warning",
+                    "headline": "Tornado Warning for Travis County",
+                    "severity": "Extreme",
+                    "senderName": "NWS Austin",
+                    "sent": "2026-11-09T18:00:00-06:00",
+                    "expires": "2026-11-09T18:45:00-06:00",
+                    "instruction": "Take shelter now.",
+                    "id": "https://api.weather.gov/alerts/test",
+                },
+            }
+        ]
+    }
+)
 
 
 class _FakeResponse:

@@ -17,3 +17,9 @@ services:
         sync: false
       - key: RAG_TIMEOUT
         value: "30"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: "https://api.openai.com/v1"
+      - key: OPENAI_MODEL
+        value: "gpt-4o-mini"

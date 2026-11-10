@@ -164,13 +164,7 @@
     fillText(bubble, text);
     body.appendChild(bubble);
 
-    const sourceText = formatSources(sources);
-    if (sourceText) {
-      const source = document.createElement("p");
-      source.className = "source";
-      source.textContent = sourceText;
-      body.appendChild(source);
-    }
+    appendSources(body, sources);
 
     row.appendChild(body);
     return row;
@@ -193,23 +187,62 @@
     });
   }
 
-  function formatSources(sources) {
+  function appendSources(body, sources) {
     if (!sources || !sources.length) {
-      return "";
+      return;
     }
-    const titles = sources
-      .map(function (source) {
-        return source && source.title ? source.title : "";
-      })
-      .filter(Boolean);
-    if (!titles.length) {
-      return "";
-    }
-    const preview = sources.some(function (source) {
-      const detail = (source && source.detail) || "";
-      return detail.toLowerCase().indexOf("preview") !== -1 || (source && source.id === "preview");
+    const wrap = document.createElement("div");
+    wrap.className = "sources";
+    sources.forEach(function (source) {
+      if (!source) {
+        return;
+      }
+      const line = document.createElement("p");
+      line.className = "source";
+      const bits = [];
+      if (source.title) {
+        bits.push(source.title);
+      }
+      if (source.retrieved_at) {
+        bits.push("checked " + source.retrieved_at);
+      }
+      if (source.detail) {
+        bits.push(source.detail);
+      }
+      if (!bits.length) {
+        return;
+      }
+      line.appendChild(document.createTextNode(bits.join(" · ")));
+      const href = safeUrl(source.url);
+      if (href) {
+        line.appendChild(document.createTextNode(" · "));
+        const link = document.createElement("a");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Official record";
+        line.appendChild(link);
+      }
+      wrap.appendChild(line);
     });
-    return (preview ? "Preview set · " : "Sources · ") + titles.join(", ");
+    if (wrap.childNodes.length) {
+      body.appendChild(wrap);
+    }
+  }
+
+  function safeUrl(url) {
+    if (typeof url !== "string" || !url) {
+      return "";
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        return parsed.href;
+      }
+    } catch (error) {
+      return "";
+    }
+    return "";
   }
 
   function setMode(mode) {
@@ -217,9 +250,18 @@
     if (mode === "rag") {
       modeStatus.textContent = "Retrieval connected";
       modeStatus.title = "Answers are requested from the connected retrieval service.";
+    } else if (mode === "llm") {
+      modeStatus.textContent = "Model on sources";
+      modeStatus.title = "A language model rephrased retrieved text and was told not to add facts.";
+    } else if (mode === "official") {
+      modeStatus.textContent = "Weather Service";
+      modeStatus.title = "This reply uses National Weather Service alerts checked at the time shown.";
+    } else if (mode === "unavailable") {
+      modeStatus.textContent = "Source missing";
+      modeStatus.title = "Harbor does not have a live source for that request and did not invent one.";
     } else {
-      modeStatus.textContent = "Preview knowledge";
-      modeStatus.title = "Retrieval is not connected yet. Answers come from Harbor's curated preview set.";
+      modeStatus.textContent = "Sources required";
+      modeStatus.title = "General guidance is labeled as such and is not a live incident report.";
     }
   }
 

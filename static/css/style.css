@@ -406,10 +406,18 @@ button {
   border: 1px solid var(--danger-line);
 }
 
+.sources {
+  margin-top: 6px;
+}
+
 .source {
-  margin: 6px 0 0;
+  margin: 0 0 4px;
   color: var(--faint);
   font-size: 0.8rem;
+}
+
+.source a {
+  color: var(--teal);
 }
 
 .dots {

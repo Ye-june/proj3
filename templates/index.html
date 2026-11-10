@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Harbor helps households plan for floods, hurricanes, wildfires, and earthquakes, including which preparations carry across hazards and which decisions do not.">
+    <meta name="description" content="Harbor reports disaster information only when a source returned it, including National Weather Service alerts, and says so when a live shelter, road, or power feed is missing.">
     <meta name="theme-color" content="#0E1C33">
-    <title>Harbor — Cross-hazard preparedness</title>
+    <title>Harbor — Disaster information</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
           <span class="mark" aria-hidden="true">H</span>
           <span class="brand-copy">
             <span class="brand-name">Harbor</span>
-            <span class="brand-tag">Cross-hazard preparedness</span>
+            <span class="brand-tag">Official sources, or a clear gap</span>
           </span>
         </a>
         <div class="top-actions">
@@ -28,21 +28,21 @@
             class="status"
             id="mode-status"
             data-mode="{{ mode }}"
-            title="{% if mode == 'rag' %}Answers are requested from the connected retrieval service.{% else %}Retrieval is not connected yet. Answers come from Harbor's curated preview set.{% endif %}"
+            title="{% if mode == 'rag' %}Answers are requested from the connected retrieval service.{% elif mode == 'llm' %}A language model may rephrase text, and only from retrieved sources.{% else %}Harbor reports a source and the time it was checked, or says the source is missing.{% endif %}"
           >
-            {% if mode == "rag" %}Retrieval connected{% else %}Preview knowledge{% endif %}
+            {% if mode == "rag" %}Retrieval connected{% elif mode == "llm" %}Model on sources{% else %}Sources required{% endif %}
           </p>
         </div>
       </header>
 
       <div class="shell">
         <aside class="rail">
-          <p class="eyebrow">The shared problem</p>
-          <h1>Most disaster advice is written for one hazard. Households live with several.</h1>
+          <p class="eyebrow">What Harbor will say</p>
+          <h1>A source and a time, or a plain statement that the source is missing.</h1>
           <p class="rail-copy">
-            A flood, a hurricane, a wildfire, and an earthquake do not require four different go-bags
-            or four reunion plans. They do require a few decisions that should not be mixed up.
-            Harbor is where you ask what to prepare once, and what changes when the hazard changes.
+            Ask for active weather alerts with a U.S. city and state, or ask a general safety question.
+            Harbor reads National Weather Service alerts and a small curated guidance set.
+            It does not invent shelter locations, road closures, power outages, or evacuation orders.
           </p>
           <ul class="hazard-list">
             <li>Flood</li>
@@ -51,8 +51,8 @@
             <li>Earthquake</li>
           </ul>
           <p class="rail-note">
-            Planning guidance for ahead of time. During an emergency, follow local officials.
-            Harbor does not issue warnings or evacuation orders.
+            Harbor complements local emergency services. It does not issue warnings or evacuation orders.
+            If you are in danger, call 911.
           </p>
         </aside>
 
@@ -61,22 +61,22 @@
             <div class="thread-inner">
               <section class="empty" id="empty">
                 <p class="eyebrow">Start with a question</p>
-                <h2>What should you do before the next one?</h2>
+                <h2>Ask what a source actually says.</h2>
                 <p class="empty-lead">
-                  Ask what stays the same across floods, hurricanes, wildfires, and earthquakes, and what should not.
+                  Include a city and state for a live weather-alert check. For shelters, roads, and power, Harbor says when it has no live feed.
                 </p>
                 <div class="prompts">
+                  <button type="button" class="prompt" data-prompt="Are there active weather alerts in Austin, Texas?">
+                    <span class="prompt-kicker">Live alerts</span>
+                    <span class="prompt-text">Are there active weather alerts in Austin, Texas?</span>
+                  </button>
+                  <button type="button" class="prompt" data-prompt="Where is the nearest open shelter?">
+                    <span class="prompt-kicker">No invented shelters</span>
+                    <span class="prompt-text">Where is the nearest open shelter?</span>
+                  </button>
                   <button type="button" class="prompt" data-prompt="What should go in one go-bag for floods, hurricanes, wildfires, and earthquakes?">
-                    <span class="prompt-kicker">Shared kit</span>
+                    <span class="prompt-kicker">General guidance</span>
                     <span class="prompt-text">What should go in one go-bag for floods, hurricanes, wildfires, and earthquakes?</span>
-                  </button>
-                  <button type="button" class="prompt" data-prompt="How is leaving for a flood different from leaving for a hurricane?">
-                    <span class="prompt-kicker">Two kinds of leaving</span>
-                    <span class="prompt-text">How is leaving for a flood different from leaving for a hurricane?</span>
-                  </button>
-                  <button type="button" class="prompt" data-prompt="Which alerts should we join before wildfire or hurricane season?">
-                    <span class="prompt-kicker">Early warnings</span>
-                    <span class="prompt-text">Which alerts should we join before wildfire or hurricane season?</span>
                   </button>
                   <button type="button" class="prompt" data-prompt="During an earthquake, should we run outside or stay where we are?">
                     <span class="prompt-kicker">During shaking</span>
@@ -96,7 +96,7 @@
                 name="message"
                 rows="1"
                 maxlength="2000"
-                placeholder="Ask a preparedness question"
+                placeholder="Ask about alerts, safety, or local emergency resources"
                 aria-describedby="hint"
                 enterkeyhint="send"
                 required
@@ -112,8 +112,10 @@
               <span class="fineprint-sep" aria-hidden="true">·</span>
               {% if mode == "rag" %}
                 Answers are requested from the connected retrieval service.
+              {% elif mode == "llm" %}
+                A language model may rephrase retrieved text and may not add facts.
               {% else %}
-                Preview mode uses a curated starter set until retrieval is connected.
+                Answers include the source and the time it was checked.
               {% endif %}
               Not an emergency service.
             </p>

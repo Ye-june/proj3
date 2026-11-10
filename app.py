@@ -44,7 +44,7 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        mode = "rag" if os.environ.get("RAG_BACKEND_URL", "").strip() else "placeholder"
+        mode = _page_mode()
         return render_template("index.html", mode=mode)
 
     @app.get("/health")
@@ -85,6 +85,14 @@ def create_app() -> Flask:
         return "That page is not part of Harbor.", 404
 
     return app
+
+
+def _page_mode() -> str:
+    if os.environ.get("RAG_BACKEND_URL", "").strip():
+        return "rag"
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return "llm"
+    return "grounded"
 
 
 def _clean_history(history) -> list[dict]:
