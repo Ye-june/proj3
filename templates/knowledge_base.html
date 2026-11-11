@@ -7,37 +7,48 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <section>
-    <h2>Usage logs</h2>
-    <p>Total queries: <strong>{{ total_queries }}</strong></p>
+    <main class="admin-dashboard">
+        <header class="admin-header">
+            <h1>Admin dashboard</h1>
+            <a href="{{ url_for('index') }}">Back to chat</a>
+        </header>
 
-    {% if recent_queries %}
-    <table>
-        <thead>
-            <tr>
-                <th scope="col">Timestamp (UTC)</th>
-                <th scope="col">Response time (ms)</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for timestamp, response_ms in recent_queries %}
-            <tr>
-                <td>{{ timestamp }}</td>
-                <td>{{ "%.2f"|format(response_ms) }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>No queries recorded yet.</p>
-    {% endif %}
-</section>
-    <main>
-        <a href="{{ url_for('index') }}">Back to chat</a>
-        <h1>Knowledge Base</h1>
-        <p>Clear and reload will be available once the retrieval service is connected.</p>
-        <button type="button" disabled>Clear knowledge base</button>
-        <button type="button" disabled>Reload knowledge base</button>
+        <section class="admin-card">
+            <h2>Usage logs</h2>
+            <p class="admin-count">Total queries <strong>{{ total_queries }}</strong></p>
+
+            {% if recent_queries %}
+            <div class="admin-table-wrap">
+                <table class="admin-table" aria-label="Recent chat queries">
+                    <thead>
+                        <tr>
+                            <th scope="col">Timestamp (UTC)</th>
+                            <th scope="col">Response time (ms)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for timestamp, response_ms in recent_queries %}
+                        <tr>
+                            <td><time datetime="{{ timestamp }}">{{ timestamp[:19]|replace("T", " ") }}</time></td>
+                            <td>{{ "%.2f"|format(response_ms) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p>No queries recorded yet.</p>
+            {% endif %}
+        </section>
+
+        <section class="admin-card">
+            <h2>Knowledge base</h2>
+            <p>Clear and reload will be available once the retrieval service is connected.</p>
+            <div class="admin-actions">
+                <button type="button" disabled>Clear knowledge base</button>
+                <button type="button" disabled>Reload knowledge base</button>
+            </div>
+        </section>
     </main>
 </body>
 </html>
