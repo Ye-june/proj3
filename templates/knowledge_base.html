@@ -7,6 +7,31 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+    <section>
+    <h2>Usage logs</h2>
+    <p>Total queries: <strong>{{ total_queries }}</strong></p>
+
+    {% if recent_queries %}
+    <table>
+        <thead>
+            <tr>
+                <th scope="col">Timestamp (UTC)</th>
+                <th scope="col">Response time (ms)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for timestamp, response_ms in recent_queries %}
+            <tr>
+                <td>{{ timestamp }}</td>
+                <td>{{ "%.2f"|format(response_ms) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No queries recorded yet.</p>
+    {% endif %}
+</section>
     <main>
         <a href="{{ url_for('index') }}">Back to chat</a>
         <h1>Knowledge Base</h1>

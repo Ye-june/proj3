@@ -8,6 +8,14 @@ from __future__ import annotations
 
 import os
 
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+from chat.usage import read_usage, record_query
+
+from time import perf_counter
+
 from flask import Flask, jsonify, render_template, request
 
 from chat.responder import ResponderError, answer_question
@@ -49,7 +57,14 @@ def create_app() -> Flask:
 
     @app.get("/admin/knowledge-base")
     def knowledge_base():
-        return render_template("knowledge_base.html")
+        total_queries, recent_queries = read_usage(
+            Path(app.instance_path) / "usage.sqlite3"
+        )
+        return render_template(
+            "knowledge_base.html",
+            total_queries=total_queries,
+            recent_queries=recent_queries,
+        )
 
     @app.get("/health")
     def health():
@@ -69,6 +84,8 @@ def create_app() -> Flask:
             return jsonify({"error": "Please keep questions under 2000 characters."}), 400
 
         history = _clean_history(payload.get("history"))
+        timestamp = datetime.now(timezone.utc).isoformat()
+        started_at = perf_counter()
         try:
             result = answer_question(message, history)
         except ResponderError as exc:
@@ -76,6 +93,16 @@ def create_app() -> Flask:
         except Exception:
             app.logger.exception("chat request failed")
             return jsonify({"error": "Harbor could not answer just now. Please try again."}), 500
+        finally:
+            response_ms = (perf_counter() - started_at) * 1000
+            try:
+                record_query(
+                    Path(app.instance_path) / "usage.sqlite3",
+                    timestamp,
+                    response_ms,
+                )
+            except (OSError, sqlite3.Error):
+                app.logger.exception("Could not save chat usage")
         return jsonify(result)
 
     @app.errorhandler(413)
