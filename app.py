@@ -47,6 +47,10 @@ def create_app() -> Flask:
         mode = _page_mode()
         return render_template("index.html", mode=mode)
 
+    @app.get("/admin/knowledge-base")
+    def knowledge_base():
+        return render_template("knowledge_base.html")
+
     @app.get("/health")
     def health():
         return jsonify({"status": "ok"})
