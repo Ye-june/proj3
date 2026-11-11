@@ -6,6 +6,8 @@ Serves the chat interface and a small JSON API. Retrieval lives behind
 
 from __future__ import annotations
 
+from secrets import compare_digest
+
 import os
 
 import sqlite3
@@ -19,7 +21,6 @@ from time import perf_counter
 from flask import Flask, jsonify, render_template, request
 
 from chat.responder import ResponderError, answer_question
-
 
 def load_local_env(path: str | None = None) -> None:
     """Load a local ``.env`` file without overriding variables already set.
@@ -57,6 +58,23 @@ def create_app() -> Flask:
 
     @app.get("/admin/knowledge-base")
     def knowledge_base():
+        admin_password = os.environ.get("HARBOR_ADMIN_PASSWORD")
+        if not admin_password:
+            return "Admin access is not configured.", 503
+
+        credentials = request.authorization
+        if (
+            credentials is None
+            or credentials.type.lower() != "basic"
+            or credentials.username != "admin"
+            or not compare_digest(
+                (credentials.password or "").encode("utf-8"),
+                admin_password.encode("utf-8"),
+            )
+        ):
+            return "Admin sign-in required.", 401, {
+                "WWW-Authenticate": 'Basic realm="Harbor Admin"'
+            }
         total_queries, recent_queries = read_usage(
             Path(app.instance_path) / "usage.sqlite3"
         )
