@@ -294,12 +294,19 @@ class PlaceholderResponder:
             return _gap_answer(topics, checked)
         passage = _best_passage(normalized)
         if passage is None:
-            return _package(FALLBACK_BODY, "unavailable", [_gap_source(checked)], checked, GUIDANCE_NOTICE)
+            return _package(
+                FALLBACK_BODY,
+                "unavailable",
+                [_gap_source(checked, text=FALLBACK_BODY)],
+                checked,
+                GUIDANCE_NOTICE,
+            )
         body = passage["body"].rstrip() + "\n\n" + CLOSING
         source = {
             "id": passage["id"],
             "title": passage["title"],
             "detail": "Curated guidance. Not a live official report.",
+            "text": passage["body"].rstrip(),
             "retrieved_at": checked,
         }
         return _package(body, "guidance", [source], checked, GUIDANCE_NOTICE)
@@ -315,7 +322,13 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
         )
         if topics:
             body += "\n\n" + _gap_paragraphs(topics)
-        return _package(body, "unavailable", [_gap_source(checked, "City and state required")], checked, GUIDANCE_NOTICE)
+        return _package(
+            body,
+            "unavailable",
+            [_gap_source(checked, "City and state required", text=body)],
+            checked,
+            GUIDANCE_NOTICE,
+        )
 
     city, state = place
     lookup = fetch_active_alerts(city, state, timeout=_timeout_seconds())
@@ -326,7 +339,7 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
         return _package(
             body,
             "unavailable",
-            [_gap_source(checked, "National Weather Service")],
+            [_gap_source(checked, "National Weather Service", text=body)],
             checked,
             "The official alert feed did not return a usable result.",
         )
@@ -344,6 +357,7 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
                 "id": "nws-none",
                 "title": f"National Weather Service active alerts for {matched}",
                 "detail": "No active alerts in the response.",
+                "text": body,
                 "retrieved_at": checked,
                 "url": "https://www.weather.gov/",
             }
@@ -362,11 +376,18 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
             if alert.get("instruction"):
                 lines.append(alert["instruction"])
             lines.append("")
+            alert_text = (
+                f"{alert['event']} ({alert['severity']}). "
+                f"Issued {alert['sent']} by {alert['sender']}. Expires {alert['expires']}."
+            )
+            if alert.get("instruction"):
+                alert_text += " " + alert["instruction"]
             sources.append(
                 {
                     "id": f"nws-{index}",
                     "title": alert["headline"],
                     "detail": f"{alert['sender']} · sent {alert['sent']} · expires {alert['expires']}",
+                    "text": alert_text,
                     "retrieved_at": checked,
                     "url": alert.get("url") or "",
                 }
@@ -374,6 +395,7 @@ def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str
         body = "\n".join(lines).rstrip()
     if topics:
         body += "\n\n" + _gap_paragraphs(topics)
+        sources.append(_gap_source(checked, ", ".join(topic[1] for topic in topics), text=_gap_paragraphs(topics)))
     body += (
         "\n\nThis is only the alert feed for that point. "
         "It does not list shelters, road closures, or power outages.\n\n" + SAFETY_LINE
@@ -393,7 +415,7 @@ def _gap_answer(topics: list[tuple[str, str, str]], checked: str) -> dict:
     return _package(
         body,
         "unavailable",
-        [_gap_source(checked, labels)],
+        [_gap_source(checked, labels, text=_gap_paragraphs(topics))],
         checked,
         f"No live source is connected for {labels}.",
     )
@@ -403,13 +425,16 @@ def _gap_paragraphs(topics: list[tuple[str, str, str]]) -> str:
     return "\n\n".join(topic[2] for topic in topics)
 
 
-def _gap_source(checked: str, label: str = "No live source connected") -> dict:
-    return {
+def _gap_source(checked: str, label: str = "No live source connected", text: str = "") -> dict:
+    source = {
         "id": "gap",
         "title": label,
         "detail": "Harbor did not retrieve an official record for this request.",
         "retrieved_at": checked,
     }
+    if text.strip():
+        source["text"] = text.strip()
+    return source
 
 
 def _package(reply: str, mode: str, sources: list[dict], checked: str, notice: str) -> dict:
@@ -491,12 +516,13 @@ def _reference_documents(checked: str) -> list[dict]:
                     "id": passage["id"],
                     "title": passage["title"],
                     "detail": "Curated guidance. Not a live official report.",
+                    "text": passage["body"].rstrip(),
                     "retrieved_at": checked,
                 },
             }
         )
     for topic_id, label, guidance in gap_catalog():
-        source = _gap_source(checked, label)
+        source = _gap_source(checked, label, text=guidance)
         source["id"] = f"gap-{topic_id}"
         documents.append(
             {
@@ -713,9 +739,16 @@ def _normalize_sources(sources) -> list[dict]:
             entry = {"title": title}
             if item.get("id"):
                 entry["id"] = str(item["id"])[:80]
-            detail = item.get("detail") or item.get("snippet")
+            document = item.get("text") if isinstance(item.get("text"), str) else ""
+            if not document.strip() and isinstance(item.get("snippet"), str):
+                document = item.get("snippet")
+            detail = item.get("detail")
+            if not (isinstance(detail, str) and detail.strip()) and document.strip() and document is not item.get("text"):
+                detail = document
             if isinstance(detail, str) and detail.strip():
                 entry["detail"] = detail.strip()[:300]
+            if document.strip():
+                entry["text"] = document.strip()[:4000]
             retrieved_at = item.get("retrieved_at")
             if isinstance(retrieved_at, str) and retrieved_at.strip():
                 entry["retrieved_at"] = retrieved_at.strip()[:40]

@@ -188,43 +188,48 @@
   }
 
   function appendSources(body, sources) {
-    if (!sources || !sources.length) {
+    const usable = (sources || []).filter(function (source) {
+      return source && (source.title || source.detail || source.text || safeUrl(source.url));
+    });
+    if (!usable.length) {
       return;
     }
-    const wrap = document.createElement("div");
-    wrap.className = "sources";
-    sources.forEach(function (source) {
-      if (!source) {
-        return;
-      }
-      const line = document.createElement("p");
-      line.className = "source";
-      const bits = [];
-      if (source.title) {
-        bits.push(source.title);
-      }
+    const details = document.createElement("details");
+    details.className = "sources";
+    const summary = document.createElement("summary");
+    summary.textContent = "Sources used";
+    details.appendChild(summary);
+    usable.forEach(function (source) {
+      const doc = document.createElement("article");
+      doc.className = "source-doc";
+      const title = document.createElement("p");
+      title.className = "source-title";
+      title.textContent = source.title || "Source";
+      doc.appendChild(title);
       if (source.detail) {
-        bits.push(source.detail);
+        const detail = document.createElement("p");
+        detail.className = "source-detail";
+        detail.textContent = source.detail;
+        doc.appendChild(detail);
       }
-      if (!bits.length) {
-        return;
+      if (source.text) {
+        const text = document.createElement("p");
+        text.className = "source-text";
+        text.textContent = source.text;
+        doc.appendChild(text);
       }
-      line.appendChild(document.createTextNode(bits.join(" · ")));
       const href = safeUrl(source.url);
       if (href) {
-        line.appendChild(document.createTextNode(" · "));
         const link = document.createElement("a");
         link.href = href;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         link.textContent = "Official record";
-        line.appendChild(link);
+        doc.appendChild(link);
       }
-      wrap.appendChild(line);
+      details.appendChild(doc);
     });
-    if (wrap.childNodes.length) {
-      body.appendChild(wrap);
-    }
+    body.appendChild(details);
   }
 
   function safeUrl(url) {

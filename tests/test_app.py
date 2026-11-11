@@ -41,6 +41,9 @@ class HarborAppTests(unittest.TestCase):
         self.assertEqual(body["mode"], "guidance")
         self.assertIn("one gallon", body["reply"])
         self.assertEqual(body["sources"][0]["id"], "gobag")
+        self.assertEqual(len(body["sources"]), 1)
+        self.assertIn("one gallon", body["sources"][0]["text"])
+        self.assertNotIn("Ready, Set, Go", body["sources"][0]["text"])
         self.assertIn("Not a live", body["notice"])
         self.assertTrue(body["retrieved_at"])
 
@@ -141,6 +144,7 @@ class PlaceholderRoutingTests(unittest.TestCase):
         result = self.responder.answer("Where is the nearest open shelter in Austin, Texas?", [])
         self.assertEqual(result["mode"], "unavailable")
         self.assertIn("will not invent", result["reply"])
+        self.assertIn("will not invent", result["sources"][0]["text"])
         self.assertNotIn("Main Street", result["reply"])
 
     def test_live_alerts_require_a_place(self):
@@ -158,6 +162,7 @@ class PlaceholderRoutingTests(unittest.TestCase):
         self.assertEqual(result["mode"], "official")
         self.assertIn("Tornado Warning", result["reply"])
         self.assertIn("Take shelter now.", result["reply"])
+        self.assertIn("Take shelter now.", result["sources"][0]["text"])
         self.assertIn("does not list shelters", result["reply"])
         self.assertTrue(result["sources"][0]["retrieved_at"])
         self.assertEqual(result["sources"][0]["url"], "https://api.weather.gov/alerts/test")
@@ -233,6 +238,8 @@ class PlaceholderRoutingTests(unittest.TestCase):
         self.assertEqual(result["mode"], "llm")
         self.assertEqual(result["sources"][0]["id"], "earthquake")
         self.assertIn("Drop, Cover, and Hold On", result["reply"])
+        self.assertIn("Drop, Cover, and Hold On", result["sources"][0]["text"])
+        self.assertEqual(len(result["sources"]), 1)
         self.assertNotIn("go-bag", result["reply"].lower())
 
     @patch("chat.responder.urllib.request.urlopen")
