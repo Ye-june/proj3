@@ -10,6 +10,12 @@ The Flask route only calls :func:`answer_question`.
 3. ``OPENAI_API_KEY`` lets an OpenAI-compatible model read the question in
    ordinary language, choose the relevant documents, and answer from those
    documents only. If the model is unavailable, the keyword match is shown.
+
+Grounding (story 3): the dataset comes from ``data/knowledge_base.json`` via
+``chat.knowledge``. Any reworded answer, from the model or the retrieval
+service, must pass ``chat.grounding.is_supported`` against its sources, or
+Harbor shows the source text instead. A retrieval-service reply with no
+sources is withheld.
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ import re
 import urllib.error
 import urllib.request
 
+from chat.grounding import is_supported
+from chat.knowledge import knowledge_base
 from chat.official import fetch_active_alerts
 from chat.policy import (
     SAFETY_LINE,
@@ -41,220 +49,28 @@ CLOSING = (
     "and not an evacuation order. " + SAFETY_LINE
 )
 
+MODEL_NOTICE = "Wording from the language model, checked against the retrieved sources below."
+REPLACED_NOTICE = (
+    "The reworded answer included details the sources do not state, "
+    "so this shows the source text directly."
+)
+
 GUIDANCE_NOTICE = (
     "General guidance. Not a live official report. "
     "Shelter locations, road closures, power outages, and evacuation orders "
     "are included only when a retrieved source states them."
 )
 
-# Keyword lists are matched against a normalized question (lowercase, hyphens
-# treated as spaces). Longer phrases are worth more than single words so a
-# specific question beats a passage that only shares a hazard name.
-PASSAGES = [
-    {
-        "id": "gobag",
-        "title": "One go-bag for several hazards",
-        "keywords": [
-            "go bag",
-            "emergency kit",
-            "what should go in",
-            "what to pack",
-            "gallon",
-            "supplies",
-            "power bank",
-            "prescription",
-            "pet supplies",
-        ],
-        "body": (
-            "Pack one bag the household can carry or load quickly. The same bag is the right start "
-            "for a flood, a hurricane, a wildfire, or an earthquake, because the first problem is "
-            "often the same: you may have to leave, or home may be without power and open stores.\n\n"
-            "For each person, a widely used planning baseline is one gallon of water per day for at "
-            "least three days, plus food that does not need a stove. Add a flashlight, batteries, a "
-            "whistle, a phone power bank, a small first-aid kit, and the prescription medicines people "
-            "in the household actually take. Include copies of identification and insurance, a little "
-            "cash in small bills, sturdy shoes, and a change of clothes.\n\n"
-            "If a child, an older adult, or a pet is part of the household, pack what they need "
-            "specifically. Glasses, hearing aids, and a paper list of phone numbers belong in the bag, "
-            "because the cell network may not work. Keep the bag by the door you would use to leave. "
-            "During the months when local hazards are more active, keep the car at least half full."
-        ),
-    },
-    {
-        "id": "compare",
-        "title": "Flood decisions and hurricane decisions",
-        "keywords": [
-            "leaving for a flood",
-            "leaving for a hurricane",
-            "different from leaving",
-            "storm surge",
-            "evacuation zone",
-            "floodwater",
-            "flash flood",
-            "drive through",
-            "turn around",
-            "do not drive",
-        ],
-        "body": (
-            "A flood and a hurricane can both require leaving, and both can involve water. The decision "
-            "is still not the same.\n\n"
-            "A hurricane often gives a day or more of warning. The dangerous mistake is waiting to see "
-            "the wind. If your zone is ordered to evacuate, go while roads are still open. Storm surge "
-            "can flood coastal and tidal areas well before the center of the storm arrives, including "
-            "places that do not look like a beach. Learn your evacuation zone on a clear day.\n\n"
-            "A flood can be a river that rises for hours, or a flash flood that arrives in minutes. "
-            "Leave if officials advise it. Separately, do not drive or walk through floodwater, even "
-            "on a route you were not using to evacuate. The road underneath may be gone, and the water "
-            "is often deeper and faster than it looks. If you meet standing water, turn around.\n\n"
-            "Shared preparation is a go-bag, enough fuel to leave, two ways out of the neighborhood, "
-            "and a meeting place. The split is this: a hurricane zone order is a reason to leave early. "
-            "Floodwater on the road is a reason to stop, not to push through."
-        ),
-    },
-    {
-        "id": "alerts",
-        "title": "Alerts to join before the season",
-        "keywords": [
-            "which alerts",
-            "alerts should",
-            "join before",
-            "hurricane season",
-            "wildfire season",
-            "wireless emergency",
-            "weather radio",
-            "alert list",
-            "sign up",
-            "notifications",
-        ],
-        "body": (
-            "Join alerts before you need them. Wireless Emergency Alerts are the short official messages "
-            "a phone can receive for imminent threats. Leave them on. They do not replace a local list.\n\n"
-            "Also join the system run by your city, county, or parish emergency management office. That "
-            "list is how many communities send evacuation notices, shelter openings, and boil-water or "
-            "air-quality messages that a national push will not name street by street. A NOAA Weather "
-            "Radio is worth having where hurricanes or floods are part of the local risk, because it "
-            "still works when the internet does not.\n\n"
-            "Before wildfire season, confirm that the county list is the one that will name your area, "
-            "and choose an out-of-area contact. Before hurricane season, confirm whether the home is in "
-            "an evacuation zone and save the official page you will check. Alert systems are a poor "
-            "thing to learn while you are packing."
-        ),
-    },
-    {
-        "id": "earthquake",
-        "title": "What to do while the ground is shaking",
-        "keywords": [
-            "during an earthquake",
-            "run outside",
-            "stay where we are",
-            "drop cover",
-            "hold on",
-            "aftershock",
-            "while it is shaking",
-            "doorway",
-            "floor started",
-            "ground started",
-            "ground is shaking",
-            "tremor",
-        ],
-        "body": (
-            "While the ground is shaking, Drop, Cover, and Hold On. Get down, get under a sturdy table "
-            "or against an interior wall away from glass, and hold on until the shaking stops. Do not "
-            "run outside during the shaking. Falling brick, glass, and pieces of the building front are "
-            "a common way people are hurt. A doorway is not a special safe spot.\n\n"
-            "When the shaking stops, check yourself and the people with you. If you smell gas, or the "
-            "building is badly damaged, leave then and move to an open area away from walls and wires. "
-            "Expect aftershocks. Do not use elevators.\n\n"
-            "This is the opposite of a wildfire evacuation or a hurricane zone order, where the safer "
-            "move is often to leave before conditions get worse. During shaking, stay and cover. After "
-            "shaking, leave only if the building is unsafe or officials say so."
-        ),
-    },
-    {
-        "id": "wildfire",
-        "title": "Wildfire: ready, set, go",
-        "keywords": [
-            "ready set go",
-            "wildfire",
-            "smoke",
-            "n95",
-            "see flames",
-            "defensible",
-            "fire weather",
-            "air quality",
-        ],
-        "body": (
-            "Treat wildfire risk as Ready, Set, Go.\n\n"
-            "Ready, before a fire is anywhere near you: the go-bag is packed, copies of documents are "
-            "with it, you know the route out, and brush and debris immediately around the home have been "
-            "reduced where that is your responsibility. Set, when fire weather is high: the bag is at "
-            "the door, the car has fuel, you have N95 respirators for smoke, and you are watching the "
-            "local emergency channel. Go means leave early. Waiting until you can see flames often means "
-            "driving in smoke, in traffic, on the only road out.\n\n"
-            "If you have not been told to leave, staying inside with windows and doors closed is safer "
-            "than standing in heavy smoke. An N95 helps for a short trip through smoky air. It is not a "
-            "reason to ignore an evacuation notice. If you are ordered to leave, leave."
-        ),
-    },
-    {
-        "id": "plan",
-        "title": "A meeting plan that works for every hazard",
-        "keywords": [
-            "meeting place",
-            "out of area",
-            "get separated",
-            "find each other",
-            "reunion",
-            "family plan",
-            "contact person",
-            "if we are separated",
-        ],
-        "body": (
-            "A plan that works for every hazard is mostly about finding each other.\n\n"
-            "Pick two meeting places and say them out loud. One should be just outside the home, in case "
-            "you step out after earthquake shaking or because an alarm is sounding. One should be outside "
-            "the neighborhood, in case you cannot go back. Choose one out-of-area contact, someone far "
-            "enough away that the same storm or fire is unlikely to reach them, and agree that everyone "
-            "will report to that person. Local phone lines get congested. A distant contact often gets "
-            "through when a neighbor does not.\n\n"
-            "Write the places and the number on paper, and put a copy in the go-bag. Photograph "
-            "identification, insurance, and prescriptions and keep those copies with the list. Tell "
-            "children, roommates, and anyone who is often in the home. You do not need a different "
-            "reunion plan for a flood, a hurricane, a wildfire, and an earthquake."
-        ),
-    },
-    {
-        "id": "overview",
-        "title": "What to prepare once",
-        "keywords": [
-            "where do i start",
-            "how do i prepare",
-            "how should i prepare",
-            "how should we prepare",
-            "what should i do first",
-            "what should we do first",
-            "getting started",
-            "what stays the same",
-            "what changes",
-            "across hazards",
-            "before the next",
-        ],
-        "body": (
-            "A useful plan covers the actions that transfer, then the few decisions that do not.\n\n"
-            "Do these once for floods, hurricanes, wildfires, and earthquakes. Pack one go-bag and keep "
-            "it reachable. Leave phone emergency alerts on, and join the local alert list before the "
-            "season rather than during it. Choose two meeting places and one out-of-area contact. Keep "
-            "copies of identification, insurance, and a medication list with the bag.\n\n"
-            "Then learn the split. During earthquake shaking: Drop, Cover, and Hold On, and do not run "
-            "outside while it is shaking. In a flood: do not walk or drive through water, and leave "
-            "before routes are cut off if officials advise it. For a hurricane: if your zone is ordered "
-            "out, leave before wind and surge arrive. For a wildfire: leave early enough that you are "
-            "not driving through smoke and traffic.\n\n"
-            "Ask Harbor to go deeper on any one of those. Start with the shared steps, then the decision "
-            "that belongs to the hazard you actually face."
-        ),
-    },
-]
+# The dataset lives in data/knowledge_base.json (see chat/knowledge.py). Keyword
+# lists are matched against a normalized question (lowercase, hyphens treated
+# as spaces). Longer phrases are worth more than single words so a specific
+# question beats a passage that only shares a hazard name.
+
+
+def passages() -> list[dict]:
+    """The current dataset. Reloaded automatically when the file changes."""
+    return knowledge_base.documents()
+
 
 FALLBACK_BODY = (
     "I can check active National Weather Service alerts when you name a U.S. city and state, "
@@ -302,14 +118,7 @@ class PlaceholderResponder:
                 GUIDANCE_NOTICE,
             )
         body = passage["body"].rstrip() + "\n\n" + CLOSING
-        source = {
-            "id": passage["id"],
-            "title": passage["title"],
-            "detail": "Curated guidance. Not a live official report.",
-            "text": passage["body"].rstrip(),
-            "retrieved_at": checked,
-        }
-        return _package(body, "guidance", [source], checked, GUIDANCE_NOTICE)
+        return _package(body, "guidance", [_passage_source(passage, checked)], checked, GUIDANCE_NOTICE)
 
 
 def _alert_answer(message: str, topics: list[tuple[str, str, str]], checked: str) -> dict:
@@ -489,7 +298,7 @@ def _answer_naturally(message: str, history: list[dict]) -> dict:
     if not guidance:
         return _gap_answer([doc["topic"] for doc in gaps], checked)
 
-    reply = _grounded_wording(choice["answer"], guidance)
+    reply, used_model = _grounded_wording(choice["answer"], guidance)
     if gaps:
         reply = reply.rstrip() + "\n\n" + "\n\n".join(doc["text"] for doc in gaps)
     if "emergency services" not in reply.lower():
@@ -499,26 +308,20 @@ def _answer_naturally(message: str, history: list[dict]) -> dict:
         "llm",
         [doc["source"] for doc in guidance + gaps],
         checked,
-        "Wording from the language model, limited to the retrieved sources below.",
+        MODEL_NOTICE if used_model else REPLACED_NOTICE,
     )
 
 
 def _reference_documents(checked: str) -> list[dict]:
     documents = []
-    for passage in PASSAGES:
+    for passage in passages():
         documents.append(
             {
                 "id": passage["id"],
                 "kind": "guidance",
                 "title": passage["title"],
                 "text": passage["body"].rstrip(),
-                "source": {
-                    "id": passage["id"],
-                    "title": passage["title"],
-                    "detail": "Curated guidance. Not a live official report.",
-                    "text": passage["body"].rstrip(),
-                    "retrieved_at": checked,
-                },
+                "source": _passage_source(passage, checked),
             }
         )
     for topic_id, label, guidance in gap_catalog():
@@ -613,26 +416,32 @@ def _chosen(documents: list[dict], ids: list[str]) -> list[dict]:
     return chosen
 
 
-def _grounded_wording(answer: str, documents: list[dict]) -> str:
-    """Keep the model's wording only when it still overlaps the chosen documents."""
+def _grounded_wording(answer: str, documents: list[dict]) -> tuple[str, bool]:
+    """Keep the model's wording only if every sentence is backed by the chosen documents.
+
+    Returns (reply, used_model_wording). When the check fails, the reply is the
+    documents' own text, so nothing unsupported reaches the user.
+    """
     stitched = "\n\n".join(document["text"].rstrip() for document in documents) + "\n\n" + CLOSING
-    source_words = set(re.findall(r"[a-z]{4,}", " ".join(document["text"].lower() for document in documents)))
-    answer_words = [
-        word
-        for word in re.findall(r"[a-z]{4,}", answer.lower())
-        if word not in {"this", "that", "with", "from", "your", "have", "will", "they", "them", "when", "what", "should"}
-    ]
-    overlap = {word for word in answer_words if word in source_words}
-    if len(overlap) < 2:
-        return stitched
-    return answer.strip()
+    allowed = [document["text"] for document in documents] + [CLOSING]
+    if is_supported(answer, allowed):
+        return answer.strip(), True
+    if answer.strip():
+        logger.info("Model wording rejected: not supported by %s", [d["id"] for d in documents])
+    return stitched, False
 
 
 def _use_model_wording(draft: dict, phrased: str) -> dict:
+    """Use free-text model wording only if the draft's sources back up every sentence."""
+    source_texts = [source.get("text", "") for source in draft.get("sources") or []]
+    if draft.get("mode") != "guidance" or not is_supported(phrased, source_texts + [CLOSING]):
+        kept = dict(draft)
+        kept["notice"] = REPLACED_NOTICE
+        return kept
     phrased_draft = dict(draft)
     phrased_draft["reply"] = phrased
     phrased_draft["mode"] = "llm"
-    phrased_draft["notice"] = "Wording from the language model, limited to the retrieved sources below."
+    phrased_draft["notice"] = MODEL_NOTICE
     return phrased_draft
 
 
@@ -708,12 +517,42 @@ def _ask_rag(url: str, message: str, history: list[dict]) -> dict:
     if not isinstance(reply, str) or not reply.strip():
         raise ResponderError("The retrieval service did not return an answer.")
 
-    return {
-        "reply": reply.strip(),
-        "mode": "rag",
-        "sources": _normalize_sources(data.get("sources")),
-        "notice": None,
-    }
+    return _check_rag_reply(reply.strip(), _normalize_sources(data.get("sources")))
+
+
+def _check_rag_reply(reply: str, sources: list[dict]) -> dict:
+    """Show a retrieval-service answer only when it is tied to its sources."""
+    checked = checked_now()
+    if not sources:
+        logger.warning("RAG backend answered without sources; reply withheld")
+        body = (
+            "The retrieval service answered without naming any source, so Harbor is not showing "
+            "that answer. Please try rephrasing the question.\n\n" + SAFETY_LINE
+        )
+        return _package(
+            body,
+            "unavailable",
+            [_gap_source(checked, "No source returned", text=body)],
+            checked,
+            "Answer withheld: no source was returned.",
+        )
+    texts = [source.get("text", "") for source in sources]
+    if not any(text.strip() for text in texts):
+        return _package(
+            reply,
+            "rag",
+            sources,
+            checked,
+            "The retrieval service named its sources but did not send their text, "
+            "so Harbor could not check this answer against them.",
+        )
+    if is_supported(reply, texts + [SAFETY_LINE, CLOSING]):
+        return _package(reply, "rag", sources, checked, None)
+    logger.warning("RAG backend reply not supported by its sources; showing source text instead")
+    stitched = "\n\n".join(
+        f"{source['title']}: {source['text']}" for source in sources if source.get("text", "").strip()
+    )
+    return _package(stitched + "\n\n" + SAFETY_LINE, "rag", sources, checked, REPLACED_NOTICE)
 
 
 def _timeout_seconds() -> float:
@@ -763,8 +602,9 @@ def _best_passage(question: str) -> dict | None:
     normalized = _normalize(question)
     best = None
     best_score = 0
-    for passage in PASSAGES:
-        if passage["id"] == "overview":
+    current = passages()
+    for passage in current:
+        if passage.get("broad"):
             continue
         score = _score(normalized, passage)
         if score > best_score:
@@ -772,10 +612,28 @@ def _best_passage(question: str) -> dict | None:
             best_score = score
     if best is not None:
         return best
-    overview = next(passage for passage in PASSAGES if passage["id"] == "overview")
-    if _score(normalized, overview) > 0:
-        return overview
+    for passage in current:
+        if passage.get("broad") and _score(normalized, passage) > 0:
+            return passage
     return None
+
+
+def _passage_source(passage: dict, checked: str) -> dict:
+    """How a dataset document is shown to the user as a source."""
+    detail = passage.get("source") or "Harbor curated guidance"
+    if passage.get("updated"):
+        detail += f" · updated {passage['updated']}"
+    detail += " · Not a live official report."
+    source = {
+        "id": passage["id"],
+        "title": passage["title"],
+        "detail": detail,
+        "text": passage["body"].rstrip(),
+        "retrieved_at": checked,
+    }
+    if passage.get("url"):
+        source["url"] = passage["url"]
+    return source
 
 
 def _score(normalized_question: str, passage: dict) -> int:
