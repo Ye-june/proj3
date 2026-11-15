@@ -43,6 +43,14 @@ file, Harbor will not state it.
 
 4. Commit and push. Render redeploys with the new dataset.
 
+## Cleaning (story 7)
+
+Before validation, every document is cleaned by `chat/preprocess.py`: HTML tags and entities are
+removed, Unicode and curly quotes are normalized, control characters and extra whitespace are
+dropped, duplicate keywords are merged, and a document whose body repeats an earlier one is
+removed. `python -m chat.knowledge check` lists anything cleaning changed. This applies to every
+ingestion path, because they all load through `chat/knowledge.py`.
+
 ## How updates take effect
 
 - **Locally:** Harbor notices the file changed and reloads it on the next question. No restart needed.
