@@ -30,9 +30,9 @@ import urllib.request
 from chat.grounding import is_supported
 from chat.knowledge import knowledge_base
 from chat.official import fetch_active_alerts
+from chat.prompts import URGENT_LINE, build_system_prompt, classify_intent, intent_label, shape_passage
 from chat.policy import (
     SAFETY_LINE,
-    SYSTEM_PROMPT,
     checked_now,
     find_place,
     clip,
@@ -86,20 +86,31 @@ class ResponderError(Exception):
 
 
 def answer_question(message: str, history: list[dict] | None = None) -> dict:
-    """Return a reply grounded in a retrieved source, or an explicit gap."""
+    """Return a reply grounded in a retrieved source, or an explicit gap.
+
+    The question's intent (story 8, ``chat.prompts``) is decided here, once, and
+    shapes the prompt or passage on every path.
+    """
     history = history or []
+    intent = classify_intent(message)
     backend = os.environ.get("RAG_BACKEND_URL", "").strip()
     if backend:
-        return _ask_rag(backend, message, history)
-    if os.environ.get("OPENAI_API_KEY", "").strip():
-        return _answer_naturally(message, history)
-    return PlaceholderResponder().answer(message, history)
+        result = _ask_rag(backend, message, history, intent)
+    elif os.environ.get("OPENAI_API_KEY", "").strip():
+        result = _answer_naturally(message, history, intent)
+    else:
+        result = PlaceholderResponder().answer(message, history, intent)
+    if intent == "urgent" and URGENT_LINE not in result["reply"]:
+        result["reply"] = URGENT_LINE + "\n\n" + result["reply"]
+    result["intent"] = intent
+    result["intent_label"] = intent_label(intent)
+    return result
 
 
 class PlaceholderResponder:
     """Retrieve a source and answer from that source only."""
 
-    def answer(self, message: str, history: list[dict] | None = None) -> dict:
+    def answer(self, message: str, history: list[dict] | None = None, intent: str | None = None) -> dict:
         del history  # The external RAG and LLM callers receive history. This path is single-turn.
         normalized = normalize_for_match(message)
         checked = checked_now()
@@ -117,7 +128,8 @@ class PlaceholderResponder:
                 checked,
                 GUIDANCE_NOTICE,
             )
-        body = passage["body"].rstrip() + "\n\n" + CLOSING
+        intent = intent or classify_intent(message)
+        body = shape_passage(passage["body"].rstrip(), intent, message) + "\n\n" + CLOSING
         return _package(body, "guidance", [_passage_source(passage, checked)], checked, GUIDANCE_NOTICE)
 
 
@@ -256,17 +268,17 @@ def _package(reply: str, mode: str, sources: list[dict], checked: str, notice: s
     }
 
 
-def _answer_naturally(message: str, history: list[dict]) -> dict:
+def _answer_naturally(message: str, history: list[dict], intent: str = "factual") -> dict:
     """Let the model choose relevant documents, then answer only from those."""
     normalized = normalize_for_match(message)
     if live_alert_requested(normalized) or gap_topics(normalized):
-        return PlaceholderResponder().answer(message, history)
+        return PlaceholderResponder().answer(message, history, intent)
 
-    draft = PlaceholderResponder().answer(message, history)
+    draft = PlaceholderResponder().answer(message, history, intent)
     checked = draft.get("retrieved_at") or checked_now()
     documents = _reference_documents(checked)
     try:
-        raw = _chat_completion(SYSTEM_PROMPT, _question_prompt(message, history, documents))
+        raw = _chat_completion(build_system_prompt(intent), _question_prompt(message, history, documents, intent))
     except (ResponderError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.warning("Language model unavailable: %s", exc)
         draft = dict(draft)
@@ -340,7 +352,7 @@ def _reference_documents(checked: str) -> list[dict]:
     return documents
 
 
-def _question_prompt(message: str, history: list[dict], documents: list[dict]) -> str:
+def _question_prompt(message: str, history: list[dict], documents: list[dict], intent: str = "factual") -> str:
     lines = [
         "The user asked a natural language question about disaster preparedness or local emergency information.",
         "Choose only the documents that contain the relevant information.",
@@ -352,6 +364,7 @@ def _question_prompt(message: str, history: list[dict], documents: list[dict]) -
         "- If the user wants a live shelter, road closure, power outage, or evacuation order, choose the matching gap document and do not invent one.",
         "- The answer may use only facts stated in the chosen documents.",
         "- If none of the documents apply, use an empty passage_ids list and an empty answer.",
+        f"- Question type: {intent_label(intent)}. Write the answer in the response style from the system message.",
         "",
         "Documents:",
     ]
@@ -483,8 +496,8 @@ def _chat_completion(system: str, user: str) -> str:
     return content.strip()
 
 
-def _ask_rag(url: str, message: str, history: list[dict]) -> dict:
-    payload = json.dumps({"message": message, "history": history}).encode("utf-8")
+def _ask_rag(url: str, message: str, history: list[dict], intent: str = "factual") -> dict:
+    payload = json.dumps({"message": message, "history": history, "intent": intent}).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,

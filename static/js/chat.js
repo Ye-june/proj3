@@ -81,7 +81,7 @@
       if (!response.ok) {
         throw new Error(data.error || "Harbor could not answer just now. Please try again.");
       }
-      appendMessage("assistant", data.reply || "", data.sources || []);
+      appendMessage("assistant", data.reply || "", data.sources || [], data.intent_label);
       history.push({ role: "assistant", content: data.reply || "" });
       if (data.mode) {
         setMode(data.mode);
@@ -133,13 +133,13 @@
     return wrap;
   }
 
-  function appendMessage(role, text, sources) {
-    const row = buildMessage(role, text, sources || []);
+  function appendMessage(role, text, sources, intentLabel) {
+    const row = buildMessage(role, text, sources || [], intentLabel);
     messages.appendChild(row);
     scrollToEnd();
   }
 
-  function buildMessage(role, text, sources) {
+  function buildMessage(role, text, sources, intentLabel) {
     const row = document.createElement("article");
     row.className = "msg " + role;
 
@@ -157,6 +157,10 @@
     const who = document.createElement("p");
     who.className = "who";
     who.textContent = role === "user" ? "You" : role === "error" ? "Notice" : "Harbor";
+    if (intentLabel) {
+      who.textContent += " · " + intentLabel;
+      who.title = "Question type Harbor detected. It chooses how the answer is written.";
+    }
     body.appendChild(who);
 
     const bubble = document.createElement("div");
