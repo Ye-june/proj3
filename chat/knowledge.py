@@ -48,6 +48,8 @@ import threading
 from datetime import date
 from pathlib import Path
 
+from chat.preprocess import preprocess
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "knowledge_base.json"
@@ -164,7 +166,12 @@ def validate(data) -> tuple[list[dict], list[str]]:
 
 
 def load_file(path: Path) -> list[dict]:
-    """Read and validate a dataset file. Raises KnowledgeBaseError on any problem."""
+    """Read, clean and validate a dataset file. Raises KnowledgeBaseError on any problem."""
+    return read_file(path)[0]
+
+
+def read_file(path: Path) -> tuple[list[dict], list[str]]:
+    """Like load_file, but also returns what preprocessing changed (story 7)."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
@@ -173,10 +180,11 @@ def load_file(path: Path) -> list[dict]:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise KnowledgeBaseError([f"{path} is not valid JSON (line {exc.lineno}, column {exc.colno}): {exc.msg}"]) from exc
+    data, changes = preprocess(data)
     documents, problems = validate(data)
     if problems:
         raise KnowledgeBaseError(problems)
-    return documents
+    return documents, changes
 
 
 class KnowledgeBase:
@@ -189,6 +197,7 @@ class KnowledgeBase:
         self._loaded_path: Path | None = None
         self._mtime: float | None = None
         self._last_error: list[str] = []
+        self._last_changes: list[str] = []
 
     @property
     def path(self) -> Path:
@@ -208,7 +217,7 @@ class KnowledgeBase:
         except OSError:
             mtime = None
         try:
-            documents = load_file(path)
+            documents, changes = read_file(path)
         except KnowledgeBaseError as exc:
             with self._lock:
                 self._last_error = exc.problems
@@ -221,17 +230,20 @@ class KnowledgeBase:
             self._mtime = mtime
             self._loaded_path = path
             self._last_error = []
+            self._last_changes = changes
         logger.info("Knowledge base loaded: %d documents from %s", len(documents), path)
         return self.status()
 
     def replace(self, documents: list[dict]) -> dict:
         """Swap in documents from another source (e.g. an ingestion step) after validation."""
-        cleaned, problems = validate({"documents": documents})
+        data, changes = preprocess({"documents": documents})
+        cleaned, problems = validate(data)
         if problems:
             raise KnowledgeBaseError(problems)
         with self._lock:
             self._documents = cleaned
             self._last_error = []
+            self._last_changes = changes
         return self.status()
 
     def status(self) -> dict:
@@ -241,6 +253,7 @@ class KnowledgeBase:
                 "documents": len(self._documents),
                 "ids": [doc["id"] for doc in self._documents],
                 "errors": list(self._last_error),
+                "cleaned": list(self._last_changes),
             }
 
     def _reload_if_changed(self) -> None:
@@ -272,7 +285,7 @@ def _main(argv: list[str]) -> int:
         return 2
     path = Path(argv[1]) if len(argv) > 1 else kb_path()
     try:
-        documents = load_file(path)
+        documents, changes = read_file(path)
     except KnowledgeBaseError as exc:
         print(f"FAILED: {path}")
         for problem in exc.problems:
@@ -282,6 +295,10 @@ def _main(argv: list[str]) -> int:
     for doc in documents:
         extra = " (broad)" if doc.get("broad") else ""
         print(f"  - {doc['id']}: {doc['title']}{extra}")
+    if changes:
+        print("Preprocessing changed:")
+        for change in changes:
+            print(f"  - {change}")
     return 0
 
 
