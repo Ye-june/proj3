@@ -198,17 +198,29 @@ class KnowledgeBase:
         self._mtime: float | None = None
         self._last_error: list[str] = []
         self._last_changes: list[str] = []
+        self._lock = threading.RLock()
+        self._cleared = False
 
     @property
     def path(self) -> Path:
         return self._explicit_path or kb_path()
 
     def documents(self) -> list[dict]:
-        """Current documents (copies). Reloads first if the file changed on disk."""
-        self._reload_if_changed()
+        """Return copies of active documents and reloads if changed"""
         with self._lock:
+            if self._cleared:
+                return []
+            self._reload_if_changed()
             return copy.deepcopy(self._documents)
 
+    def clear(self) -> dict:
+        """Empty the active knowledge base until a successful reload."""
+        with self._lock:
+            self._documents = []
+            self._cleared = True
+            self._last_error = []
+            self._last_changes = []
+            return self.status()
     def reload(self) -> dict:
         """Force a reload from disk. On failure the previous dataset stays in place."""
         path = self.path
@@ -227,6 +239,7 @@ class KnowledgeBase:
             return self.status()
         with self._lock:
             self._documents = documents
+            self._cleared = False
             self._mtime = mtime
             self._loaded_path = path
             self._last_error = []

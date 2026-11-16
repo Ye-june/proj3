@@ -42,12 +42,23 @@
         </section>
 
         <section class="admin-card">
-            <h2>Knowledge base</h2>
-            <p>Clear and reload will be available once the retrieval service is connected.</p>
-            <div class="admin-actions">
-                <button type="button" disabled>Clear knowledge base</button>
-                <button type="button" disabled>Reload knowledge base</button>
-            </div>
+        <h2>Knowledge base</h2>
+        <p>Manage Harbor’s local guidance dataset.</p>
+
+{% if message %}
+<p role="status">{{ message }}</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('knowledge_base') }}" class="admin-actions">
+    <input type="hidden" name="form_token" value="{{ form_token }}">
+    <button type="submit" name="action" value="clear"
+            onclick="return confirm('Clear the local knowledge base? You can restore it with Reload.');">
+        Clear knowledge base
+    </button>
+    <button type="submit" name="action" value="reload">
+        Reload knowledge base
+    </button>
+</form>
         </section>
     </main>
 </body>

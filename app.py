@@ -22,6 +22,10 @@ from flask import Flask, jsonify, render_template, request
 
 from chat.responder import ResponderError, answer_question
 
+from hmac import digest
+
+from chat.knowledge import knowledge_base as kb
+
 def load_local_env(path: str | None = None) -> None:
     """Load a local ``.env`` file without overriding variables already set.
 
@@ -57,6 +61,7 @@ def create_app() -> Flask:
         return render_template("index.html", mode=mode)
 
     @app.get("/admin/knowledge-base")
+    @app.route("/admin/knowledge-base", methods=["GET", "POST"])
     def knowledge_base():
         admin_password = os.environ.get("HARBOR_ADMIN_PASSWORD")
         if not admin_password:
@@ -75,6 +80,31 @@ def create_app() -> Flask:
             return "Admin sign-in required.", 401, {
                 "WWW-Authenticate": 'Basic realm="Harbor Admin"'
             }
+        form_token = digest(
+            admin_password.encode("utf-8"), b"harbor:knowledge-base", "sha256"
+        ).hex()
+        message = None
+        status_code = 200
+
+        if request.method == "POST":
+            submitted_token = request.form.get("form_token", "").encode("utf-8")
+            if not compare_digest(submitted_token, form_token.encode("ascii")):
+                return "Invalid form submission.", 403
+
+            action = request.form.get("action")
+            if action == "clear":
+                kb.clear()
+                message = "Local knowledge base cleared."
+            elif action == "reload":
+                result = kb.reload()
+                if result["errors"]:
+                    message = "Reload failed. The previous knowledge base state was kept."
+                    status_code = 422
+                else:
+                    message = f"Reloaded {result['documents']} documents."
+            else:
+                return "Unknown knowledge base action.", 400
+
         total_queries, recent_queries = read_usage(
             Path(app.instance_path) / "usage.sqlite3"
         )
@@ -82,7 +112,9 @@ def create_app() -> Flask:
             "knowledge_base.html",
             total_queries=total_queries,
             recent_queries=recent_queries,
-        )
+            form_token=form_token,
+            message=message,
+        ), status_code
 
     @app.get("/health")
     def health():
@@ -134,7 +166,6 @@ def create_app() -> Flask:
         return "That page is not part of Harbor.", 404
 
     return app
-
 
 def _page_mode() -> str:
     if os.environ.get("RAG_BACKEND_URL", "").strip():
