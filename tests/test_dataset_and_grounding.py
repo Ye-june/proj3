@@ -180,6 +180,13 @@ class DatasetUpdateTests(_TempDataset):
             kb.replace([_doc(id="")])
         self.assertEqual(kb.status()["ids"], ["test-doc"])
 
+    def test_replace_after_clear_makes_documents_available_again(self):
+        kb = KnowledgeBase(self.path)
+        kb.clear()
+        self.assertEqual(kb.documents(), [])
+        kb.replace([_doc()])
+        self.assertEqual([doc["id"] for doc in kb.documents()], ["test-doc"])
+
 
 # ---------------------------------------------------------------- story 3
 
