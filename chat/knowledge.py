@@ -253,8 +253,18 @@ class KnowledgeBase:
         cleaned, problems = validate(data)
         if problems:
             raise KnowledgeBaseError(problems)
+        path = self.path
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
         with self._lock:
             self._documents = cleaned
+            self._cleared = False
+            # Mark the current file as seen, so documents() does not reload it over
+            # these documents. A later edit to the file still takes over (story 5).
+            self._loaded_path = path
+            self._mtime = mtime
             self._last_error = []
             self._last_changes = changes
         return self.status()
